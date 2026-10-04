@@ -1,82 +1,160 @@
-import io, os
+"""
+app.py - Flask web server for the Marketing Budget Variance Desk.
+
+Routes
+  GET  /               the web page
+  GET  /api/health     shows whether the AI key is configured
+  POST /api/analyze    upload a file (or use the sample) -> validated variance analysis
+  POST /api/commentary generate AI (or rules-based) commentary for an analysis
+"""
+import io
+import os
+import threading
+import time
+import uuid
+from collections import OrderedDict
+
 import pandas as pd
-from flask import Flask, render_template, request, send_file
+from flask import Flask, jsonify, render_template, request
+
+import ai_commentary
+import variance
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+SAMPLE_PATH = os.path.join(BASE_DIR, "sample_data", "veda_naturals_marketing_budget_sample.csv")
+
 app = Flask(__name__)
-BASE = os.path.dirname(__file__)
-SAMPLE = os.path.join(BASE, "veda_naturals_marketing_budget.csv")
-REQUIRED = ["Line_ID", "Period", "Category", "Line_Item", "Budget_INR", "Actual_INR"]
+app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024     # 2 MB upload limit
 
-def analyze(raw):
-    missing = [c for c in REQUIRED if c not in raw.columns]
-    if missing: raise ValueError("Missing required columns: " + ", ".join(missing))
-    d = raw[REQUIRED].copy()
-    for c in ["Budget_INR", "Actual_INR"]:
-        d[c] = pd.to_numeric(d[c], errors="coerce")
-    if d[REQUIRED].isna().any().any(): raise ValueError("Required fields contain blank or non-numeric values.")
-    if (d[["Budget_INR", "Actual_INR"]] < 0).any().any(): raise ValueError("Budget and actual amounts must be non-negative.")
-    if d["Line_ID"].duplicated().any(): raise ValueError("Duplicate Line_ID values found; each line must be unique.")
-    if (d["Budget_INR"] == 0).any(): raise ValueError("Budget must be greater than zero to calculate variance percentage.")
-    d["Variance_INR"] = d["Actual_INR"] - d["Budget_INR"]
-    d["Variance_Pct"] = (d["Variance_INR"] / d["Budget_INR"] * 100).round(2)
-    d["Status"] = d["Variance_INR"].apply(lambda x: "Over budget" if x > 0 else ("Under budget" if x < 0 else "On budget"))
-    return d
+# Short-lived server-side memory of analyses, so the AI step uses the numbers the
+# server calculated (not numbers sent back by the browser). Lost on restart.
+_STORE = OrderedDict()
+_STORE_LOCK = threading.Lock()
+STORE_TTL, STORE_MAX = 3600, 100
 
-def money(x): return f"₹{x:,.0f}"
-def build_view(d, mode):
-    budget=float(d.Budget_INR.sum()); actual=float(d.Actual_INR.sum()); variance=actual-budget
-    summary={"budget":budget,"actual":actual,"variance":variance,"pct":variance/budget*100 if budget else 0,
-      "over":int((d.Variance_INR>0).sum()),"under":int((d.Variance_INR<0).sum()),"on":int((d.Variance_INR==0).sum()),"count":len(d)}
-    cat=d.groupby("Category",as_index=False).agg(Budget_INR=("Budget_INR","sum"),Actual_INR=("Actual_INR","sum"))
-    cat["Variance_INR"]=cat.Actual_INR-cat.Budget_INR
-    cat=cat.sort_values("Variance_INR",key=lambda x:x.abs(),ascending=False)
-    maxv=max(cat.Variance_INR.abs().max(),1)
-    categories=[{"name":r.Category,"budget":money(r.Budget_INR),"actual":money(r.Actual_INR),"variance":money(r.Variance_INR),"positive":r.Variance_INR>=0,"width":abs(r.Variance_INR)/maxv*100} for r in cat.itertuples()]
-    ranked=d.assign(_abs=d.Variance_INR.abs() if mode=="amount" else d.Variance_Pct.abs()).sort_values("_abs",ascending=False)
-    rows=[]
-    for r in ranked.itertuples(): rows.append({"id":r.Line_ID,"period":r.Period,"category":r.Category,"item":r.Line_Item,"budget":money(r.Budget_INR),"actual":money(r.Actual_INR),"variance":money(r.Variance_INR),"pct":f"{r.Variance_Pct:+.2f}%","status":r.Status})
-    over=d[d.Variance_INR>0].nlargest(3,"Variance_INR")
-    under=d[d.Variance_INR<0].nsmallest(3,"Variance_INR")
-    insights=[f"Across {len(d)} records, actual spend was {money(actual)} against a budget of {money(budget)}: net {money(variance)} ({variance/budget*100:+.2f}%).",
-      f"{summary['over']} line items exceeded budget, {summary['under']} were below budget, and {summary['on']} matched budget."]
-    if len(over): insights.append("Largest overspends by rupee amount: "+", ".join(f"{r.Line_Item} ({money(r.Variance_INR)})" for r in over.itertuples())+".")
-    if len(under): insights.append("Largest underspends by rupee amount: "+", ".join(f"{r.Line_Item} ({money(r.Variance_INR)})" for r in under.itertuples())+".")
-    insights.append("Follow-up: confirm approval and business outcomes for overspends; check whether underspends reflect genuine savings, delayed activity, or incomplete execution. Spend variance alone cannot establish ROI.")
-    fallback=" ".join(insights)
-    api_key=os.getenv("GEMINI_API_KEY")
-    if api_key:
-        try:
-            from google import genai
-            client=genai.Client(api_key=api_key)
-            prompt=("Act as a cautious marketing finance analyst. Using only these computed facts, write 3 concise, decision-useful observations and 2 follow-up questions. Do not recalculate, invent causes, claim ROI, or introduce facts not provided. Facts: "+fallback)
-            response=client.models.generate_content(model=os.getenv("GEMINI_MODEL","gemini-2.5-flash"), contents=prompt)
-            if response and response.text and response.text.strip(): fallback=response.text.strip()+"\n\nComputed figures above are the source of truth; validate explanations with budget owners."
-        except Exception:
-            pass  # safe deterministic fallback if the model is unavailable
-    return summary,categories,rows,fallback
 
-@app.route('/', methods=['GET','POST'])
-def home():
-    mode="amount"; error=None; summary=None; categories=[]; rows=[]; comment=None
+def _store_put(analysis):
+    analysis_id = uuid.uuid4().hex
+    with _STORE_LOCK:
+        _STORE[analysis_id] = (time.time(), analysis)
+        while len(_STORE) > STORE_MAX:
+            _STORE.popitem(last=False)
+    return analysis_id
+
+
+def _store_get(analysis_id):
+    with _STORE_LOCK:
+        item = _STORE.get(analysis_id)
+        if item and time.time() - item[0] < STORE_TTL:
+            return item[1]
+        _STORE.pop(analysis_id, None)
+    return None
+
+
+def _error(message, status, **extra):
+    return jsonify({"ok": False, "error": message, **extra}), status
+
+
+def _client_ip():
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    return forwarded.split(",")[0].strip() or request.remote_addr or "unknown"
+
+
+def _read_table(file_storage):
+    """Read an uploaded CSV or XLSX into a DataFrame of raw (unparsed) cells."""
+    name = (file_storage.filename or "").lower()
+    raw = file_storage.read()
+    if name.endswith(".csv"):
+        for encoding in ("utf-8-sig", "latin-1"):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        return pd.read_csv(io.StringIO(text), dtype=object)
+    if name.endswith(".xlsx"):
+        return pd.read_excel(io.BytesIO(raw), dtype=object, engine="openpyxl")
+    raise ValueError("Please upload a .csv or .xlsx file.")
+
+
+@app.get("/")
+def index():
+    return render_template("index.html")
+
+
+@app.get("/api/health")
+def health():
+    return jsonify({"status": "ok",
+                    "ai_configured": bool(os.environ.get("GEMINI_API_KEY", "").strip()),
+                    "model": ai_commentary.PRIMARY_MODEL})
+
+
+@app.post("/api/analyze")
+def analyze():
     try:
-        if request.method=="POST":
-            mode=request.form.get("mode","amount")
-            f=request.files.get("file")
-            if f and f.filename:
-                if f.filename.lower().endswith('.csv'): raw=pd.read_csv(f)
-                elif f.filename.lower().endswith(('.xlsx','.xls')): raw=pd.read_excel(f)
-                else: raise ValueError("Please upload a CSV or Excel workbook.")
-            else: raw=pd.read_csv(SAMPLE)
-        else: raw=pd.read_csv(SAMPLE)
-        d=analyze(raw); summary,categories,rows,comment=build_view(d,mode)
-    except Exception as e: error=str(e)
-    return render_template('index.html',summary=summary,categories=categories,rows=rows,comment=comment,error=error,mode=mode)
+        tolerance = float(request.form.get("tolerance", "5"))
+    except ValueError:
+        return _error("Tolerance must be a number between 0 and 100.", 400)
+    if not 0 <= tolerance <= 100 or tolerance != tolerance:
+        return _error("Tolerance must be a number between 0 and 100.", 400)
 
-@app.route('/download')
-def download():
-    d=analyze(pd.read_csv(SAMPLE)); out=io.BytesIO(); d.to_csv(out,index=False); out.seek(0)
-    return send_file(out,mimetype='text/csv',as_attachment=True,download_name='veda_budget_variance_analysis.csv')
+    try:
+        if request.form.get("use_sample") == "true":
+            df = pd.read_csv(SAMPLE_PATH, dtype=object)
+        else:
+            file = request.files.get("file")
+            if file is None or not file.filename:
+                return _error("Please choose a .csv or .xlsx file first.", 400)
+            df = _read_table(file)
+    except ValueError as err:
+        return _error(str(err), 400)
+    except pd.errors.EmptyDataError:
+        return _error("The file is empty.", 422)
+    except Exception:
+        return _error("The file could not be read. Please upload a valid .csv or .xlsx file.", 422)
 
-@app.route('/source')
-def source_file(): return send_file(SAMPLE,mimetype='text/csv',as_attachment=True,download_name='veda_naturals_marketing_budget.csv')
+    try:
+        analysis = variance.analyse(df, tolerance)
+    except variance.AnalysisError as err:
+        return _error(str(err), 422, rejected=err.rejected)
 
-if __name__=='__main__': app.run(host='0.0.0.0',port=int(os.environ.get('PORT',5000)))
+    analysis["analysis_id"] = _store_put(analysis)
+    return jsonify({"ok": True, **analysis})
+
+
+@app.post("/api/commentary")
+def commentary():
+    data = request.get_json(silent=True) or {}
+    rank_by = data.get("rank_by", "amount")
+    if rank_by not in ("amount", "pct"):
+        return _error("rank_by must be 'amount' or 'pct'.", 400)
+    analysis = _store_get(str(data.get("analysis_id", "")))
+    if analysis is None:
+        return _error("This analysis has expired. Please upload the file again.", 410)
+    result = ai_commentary.get_commentary(analysis, rank_by, _client_ip(),
+                                          bool(data.get("simulate_outage")))
+    return jsonify({"ok": True, **result})
+
+
+@app.errorhandler(413)
+def too_large(_):
+    return _error("The file is larger than the 2 MB limit.", 413)
+
+
+@app.errorhandler(404)
+def not_found(_):
+    return _error("Not found.", 404) if request.path.startswith("/api/") else ("Page not found", 404)
+
+
+@app.errorhandler(405)
+def bad_method(_):
+    return _error("Method not allowed.", 405)
+
+
+@app.errorhandler(500)
+def server_error(_):
+    return _error("Something went wrong on the server. Please try again.", 500)
+
+
+if __name__ == "__main__":
+    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", 5000)), debug=False)

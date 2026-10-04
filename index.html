@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Veda Budget Lens</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div>
+      <p class="eyebrow">AI for Managers &middot; End-Term Project &middot; Use Case 8</p>
+      <h1>Veda Budget Lens</h1>
+      <p class="sub">Compare planned and actual marketing spend, spot the three biggest outliers, and get a plain-English commentary.</p>
+    </div>
+    <span class="badge">Demo &middot; synthetic data only</span>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="privacy" role="note">
+    <strong>Privacy:</strong> calculations run on this server and nothing is stored. When you click
+    <em>Generate commentary</em>, line-item names and the calculated figures are sent to Google's Gemini API.
+    Use synthetic or consented data only.
+  </p>
+
+  <!-- STEP 1 -->
+  <section class="panel" aria-labelledby="h-upload">
+    <h2 id="h-upload"><span class="step">1</span> Provide actuals vs. budget</h2>
+    <div class="upload-grid">
+      <div>
+        <label for="file-input" class="label">Upload a CSV or Excel (.xlsx) file</label>
+        <input id="file-input" type="file" accept=".csv,.xlsx">
+        <p class="hint">Required columns: <code>Line_Item</code>, <code>Budget_INR</code>, <code>Actual_INR</code>.
+          Optional: <code>Category</code>, <code>Line_ID</code>, <code>Period</code>. Maximum 500 rows, 2&nbsp;MB.</p>
+        <div class="row">
+          <button id="btn-analyse" class="btn primary" disabled>Analyse file</button>
+          <button id="btn-sample" class="btn">Load sample data (30 lines)</button>
+        </div>
+      </div>
+      <div>
+        <label for="tolerance" class="label">Tolerance (% of budget)</label>
+        <input id="tolerance" type="number" min="0" max="100" step="0.5" value="5">
+        <p class="hint">Lines whose variance is larger than this are marked <em>outside tolerance</em>.</p>
+      </div>
+    </div>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <div id="errors" class="alert error" hidden></div>
+    <div id="skipped" class="alert warn" hidden></div>
+  </section>
+
+  <!-- STEP 2 -->
+  <div id="results" hidden>
+    <section class="panel" aria-labelledby="h-review">
+      <h2 id="h-review"><span class="step">2</span> Variance review</h2>
+      <div id="kpis" class="kpis"></div>
+
+      <div class="split">
+        <div>
+          <div class="row between">
+            <h3>Top 3 outlier line items</h3>
+            <div class="toggle" role="group" aria-label="Rank outliers by">
+              <button id="rank-amount" class="active" aria-pressed="true">Largest ₹ gap</button>
+              <button id="rank-pct" aria-pressed="false">Largest % gap</button>
+            </div>
+          </div>
+          <ol id="outliers" class="outliers"></ol>
+        </div>
+        <div>
+          <h3>By category</h3>
+          <div class="scroll"><table id="cat-table" class="tbl"></table></div>
+        </div>
+      </div>
+
+      <h3>Biggest variances (₹)</h3>
+      <div id="chart" class="chart" aria-label="Variance chart"></div>
+
+      <div class="row between wrap-row">
+        <h3>All line items</h3>
+        <div class="row">
+          <label for="sort-by" class="sr">Sort</label>
+          <select id="sort-by">
+            <option value="file">File order</option>
+            <option value="amount">Largest ₹ gap first</option>
+            <option value="pct">Largest % gap first</option>
+          </select>
+          <label for="filter-by" class="sr">Filter</label>
+          <select id="filter-by">
+            <option value="all">All lines</option>
+            <option value="over">Over budget</option>
+            <option value="under">Under budget</option>
+            <option value="outside">Outside tolerance</option>
+          </select>
+          <button id="btn-export" class="btn small">Export CSV</button>
+        </div>
+      </div>
+      <div class="scroll"><table id="line-table" class="tbl"></table></div>
+    </section>
+
+    <!-- STEP 3 -->
+    <section class="panel" aria-labelledby="h-ai">
+      <h2 id="h-ai"><span class="step">3</span> Variance commentary</h2>
+      <p class="hint">The numbers above are calculated by code. The AI only writes the commentary from those numbers.</p>
+      <div class="row">
+        <button id="btn-ai" class="btn primary">Generate commentary</button>
+        <label class="check"><input type="checkbox" id="sim-outage"> Simulate AI outage (demo)</label>
+      </div>
+      <div id="ai-status" class="status" role="status" aria-live="polite"></div>
+      <div id="ai-output"></div>
+    </section>
+  </div>
+</main>
+
+<footer class="wrap foot">
+  Sample company <strong>Veda Naturals</strong> is fictional and all sample figures are synthetic.
+  Decision support only &mdash; not financial advice.
+</footer>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

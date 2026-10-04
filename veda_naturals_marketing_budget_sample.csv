@@ -1,0 +1,31 @@
+Line_ID,Period,Category,Line_Item,Budget_INR,Actual_INR
+M01,Jul-Sep 2026,Digital Advertising,Google Search Ads,1800000,1935000
+M02,Jul-Sep 2026,Digital Advertising,Meta (Instagram/Facebook) Ads,2400000,2892000
+M03,Jul-Sep 2026,Digital Advertising,YouTube Ads,1200000,1104000
+M04,Jul-Sep 2026,Digital Advertising,Programmatic Display,900000,927000
+M05,Jul-Sep 2026,Digital Advertising,Marketplace Ads,1500000,1665000
+M06,Jul-Sep 2026,Social & Influencer,Influencer Collaborations,1600000,2208000
+M07,Jul-Sep 2026,Social & Influencer,Creator Seeding Kits,300000,285000
+M08,Jul-Sep 2026,Social & Influencer,Social Content Production,700000,721000
+M09,Jul-Sep 2026,Social & Influencer,Social Management Tool,120000,120000
+M10,Jul-Sep 2026,Social & Influencer,UGC Contest,250000,160000
+M11,Jul-Sep 2026,Events & Trade,Trade Fair Participation,1000000,1070000
+M12,Jul-Sep 2026,Events & Trade,In-store Retail Promotions,1300000,1261000
+M13,Jul-Sep 2026,Events & Trade,Product Launch Event,1500000,1980000
+M14,Jul-Sep 2026,Events & Trade,Sampling Drives,800000,760000
+M15,Jul-Sep 2026,Events & Trade,Local Festival Sponsorship,600000,300000
+M16,Jul-Sep 2026,Content & Brand,Brand Video Shoot,900000,936000
+M17,Jul-Sep 2026,Content & Brand,Website Content,350000,332500
+M18,Jul-Sep 2026,Content & Brand,SEO Agency Retainer,480000,480000
+M19,Jul-Sep 2026,Content & Brand,PR Retainer,540000,567000
+M20,Jul-Sep 2026,Content & Brand,Packaging Design Refresh,650000,780000
+M21,Jul-Sep 2026,Research & Analytics,Consumer Survey,400000,380000
+M22,Jul-Sep 2026,Research & Analytics,Brand Tracking Study,550000,550000
+M23,Jul-Sep 2026,Research & Analytics,Analytics Tools,220000,231000
+M24,Jul-Sep 2026,Research & Analytics,CRM & Email Platform,260000,273000
+M25,Jul-Sep 2026,Research & Analytics,Customer Panel,300000,234000
+M26,Jul-Sep 2026,Agency & Operations,Creative Agency Fee,750000,750000
+M27,Jul-Sep 2026,Agency & Operations,Media Agency Fee,500000,515000
+M28,Jul-Sep 2026,Agency & Operations,Freelance Support,280000,350000
+M29,Jul-Sep 2026,Agency & Operations,Marketing Team Training,150000,105000
+M30,Jul-Sep 2026,Agency & Operations,Contingency Reserve,400000,220000
