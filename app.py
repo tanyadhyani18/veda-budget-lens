@@ -15,15 +15,41 @@ import uuid
 from collections import OrderedDict
 
 import pandas as pd
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
 import ai_commentary
 import variance
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SAMPLE_PATH = os.path.join(BASE_DIR, "sample_data", "veda_naturals_marketing_budget_sample.csv")
 
-app = Flask(__name__)
+
+def _top_level_or(top_file, folder):
+    """Works with the normal layout (templates/ and static/ folders) AND with a flat
+    layout where index.html, app.js and style.css sit next to app.py. A top-level
+    copy wins if both exist."""
+    if os.path.exists(os.path.join(BASE_DIR, top_file)):
+        return BASE_DIR
+    return os.path.join(BASE_DIR, folder)
+
+
+TEMPLATE_DIR = _top_level_or("index.html", "templates")
+STATIC_DIR = _top_level_or("app.js", "static")
+SAMPLE_NAME = "veda_naturals_marketing_budget_sample.csv"
+SAMPLE_PATH = os.path.join(BASE_DIR, "sample_data", SAMPLE_NAME)
+if not os.path.exists(SAMPLE_PATH):
+    SAMPLE_PATH = os.path.join(BASE_DIR, SAMPLE_NAME)
+
+app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=None)
+
+
+@app.get("/static/<path:filename>", endpoint="static")
+def static_files(filename):
+    """Serve only the two front-end files, never the Python source."""
+    if filename not in ("app.js", "style.css"):
+        abort(404)
+    return send_from_directory(STATIC_DIR, filename)
+
+
 app.config["MAX_CONTENT_LENGTH"] = 2 * 1024 * 1024     # 2 MB upload limit
 
 # Short-lived server-side memory of analyses, so the AI step uses the numbers the
